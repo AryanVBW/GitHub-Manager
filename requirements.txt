@@ -1,0 +1,23 @@
+# Core Dependencies
+flask==3.0.0
+gunicorn==21.2.0
+python-dotenv==1.0.0
+
+# GitHub API
+PyGithub==2.1.1
+requests==2.31.0
+
+# AI APIs
+google-generativeai==0.3.2
+openai==1.6.1
+
+# Email
+resend==0.7.0
+
+# Utilities
+python-dateutil==2.8.2
+pytz==2023.3
+
+# Logging and Monitoring
+colorlog==6.8.0
+
