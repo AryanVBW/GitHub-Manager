@@ -29,13 +29,14 @@ email_service = None
 issue_manager = None
 pr_manager = None
 webhook_handler = None
+initialization_error = None
 
 
 def initialize_services():
     """Initialize all services and validate configuration."""
     global github_client, ai_service, email_service
-    global issue_manager, pr_manager, webhook_handler
-    
+    global issue_manager, pr_manager, webhook_handler, initialization_error
+
     try:
         # Validate configuration
         is_valid, errors = Config.validate()
@@ -79,10 +80,18 @@ def initialize_services():
             logger.info(f"  - {repo.full_name}")
         if len(repos) > 5:
             logger.info(f"  ... and {len(repos) - 5} more")
-        
+
     except Exception as e:
+        initialization_error = str(e)
         logger.error(f"Failed to initialize services: {e}")
-        sys.exit(1)
+        import traceback
+        logger.error(traceback.format_exc())
+        # Don't exit - let the app run so we can see errors in health check
+        # sys.exit(1)
+
+
+# Initialize services at module level (for Gunicorn)
+initialize_services()
 
 
 @app.route('/')
