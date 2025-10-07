@@ -120,11 +120,12 @@ class IssueManager:
     ) -> str:
         """
         Generate a confirmation message for the assigned user.
-        
+        Reply as the authenticated user, not as a bot.
+
         Args:
             username: Username of assigned user
             issue: Issue object
-        
+
         Returns:
             Confirmation message
         """
@@ -132,7 +133,7 @@ class IssueManager:
             f"@{username} Thank you for your interest! "
             f"I've assigned this issue to you. "
             f"Feel free to ask any questions if you need clarification. "
-            f"Looking forward to your contribution! 🚀"
+            f"Looking forward to your contribution!"
         )
     
     def generate_decline_message(
@@ -143,12 +144,13 @@ class IssueManager:
     ) -> str:
         """
         Generate a polite decline message for non-selected users.
-        
+        Reply as the authenticated user, not as a bot.
+
         Args:
             username: Username of user to decline
             assigned_to: Username of user who was assigned
             issue: Issue object
-        
+
         Returns:
             Decline message
         """
@@ -157,7 +159,7 @@ class IssueManager:
             f"I really appreciate your willingness to contribute. "
             f"However, this issue has been assigned to @{assigned_to} based on their engagement. "
             f"Please feel free to check out other open issues where you can contribute. "
-            f"Your participation in this project is valued! 🙏"
+            f"Your participation in this project is valued!"
         )
     
     def handle_assignment_requests(
@@ -257,37 +259,49 @@ class IssueManager:
     
     def handle_comment(self, issue: Issue, comment: IssueComment) -> bool:
         """
-        Handle a new comment on an issue.
-        
+        Handle a new comment on an issue with personalized AI responses.
+
         Args:
             issue: Issue object
             comment: Comment object
-        
+
         Returns:
             True if handled successfully
         """
         try:
-            # Skip bot's own comments
+            # Skip bot's own comments and comments from the authenticated user
             if comment.user.login.endswith('[bot]'):
                 logger.debug(f"Skipping bot comment on issue #{issue.number}")
                 return False
-            
+
             # Check for assignment request
             if self.is_assignment_request(comment.body):
                 return self.handle_assignment_requests(issue, comment)
-            
-            # Generate AI response for other comments
+
+            # Get user's comment history for personalization
+            repo = issue.repository
+            user_comments = self.github.get_user_comment_history(
+                repo,
+                comment.user.login,
+                limit=10
+            )
+
+            # Generate personalized AI response
             issue_context = self.generate_issue_context(issue)
-            ai_response = self.ai.generate_issue_response(comment.body, issue_context)
-            
+            ai_response = self.ai.generate_issue_response(
+                comment.body,
+                issue_context,
+                user_comments=user_comments
+            )
+
             if ai_response:
                 self.github.add_comment(issue, ai_response)
-                logger.info(f"Added AI response to issue #{issue.number}")
+                logger.info(f"Added personalized AI response to issue #{issue.number} for user {comment.user.login}")
                 return True
             else:
                 logger.warning(f"Failed to generate AI response for issue #{issue.number}")
                 return False
-        
+
         except Exception as e:
             logger.error(f"Error handling comment on issue #{issue.number}: {e}")
             return False

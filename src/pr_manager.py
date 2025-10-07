@@ -89,34 +89,46 @@ class PRManager:
     
     def handle_comment(self, pr: PullRequest, comment: IssueComment) -> bool:
         """
-        Handle a new comment on a pull request.
-        
+        Handle a new comment on a pull request with personalized AI responses.
+
         Args:
             pr: PullRequest object
             comment: Comment object
-        
+
         Returns:
             True if handled successfully
         """
         try:
-            # Skip bot's own comments
+            # Skip bot's own comments and comments from the authenticated user
             if comment.user.login.endswith('[bot]'):
                 logger.debug(f"Skipping bot comment on PR #{pr.number}")
                 return False
-            
+
+            # Get user's comment history for personalization
+            repo = pr.base.repo
+            user_comments = self.github.get_user_comment_history(
+                repo,
+                comment.user.login,
+                limit=10
+            )
+
             # Generate context
             pr_context = self.generate_pr_context(pr)
-            
-            # Generate AI response
-            ai_response = self.ai.generate_pr_response(comment.body, pr_context)
-            
+
+            # Generate personalized AI response
+            ai_response = self.ai.generate_pr_response(
+                comment.body,
+                pr_context,
+                user_comments=user_comments
+            )
+
             if ai_response:
                 # Add response as comment
                 success = self.github.add_comment(pr, ai_response)
-                
+
                 if success:
-                    logger.info(f"Added AI response to PR #{pr.number}")
-                    
+                    logger.info(f"Added personalized AI response to PR #{pr.number} for user {comment.user.login}")
+
                     # Send email notification if it's a question
                     if self.is_question(comment.body):
                         self.email.notify_pr_activity(
@@ -126,7 +138,7 @@ class PRManager:
                             f"User @{comment.user.login} asked: {comment.body[:200]}...",
                             pr.html_url
                         )
-                    
+
                     return True
                 else:
                     logger.warning(f"Failed to add comment to PR #{pr.number}")
@@ -134,7 +146,7 @@ class PRManager:
             else:
                 logger.warning(f"Failed to generate AI response for PR #{pr.number}")
                 return False
-        
+
         except Exception as e:
             logger.error(f"Error handling comment on PR #{pr.number}: {e}")
             return False
@@ -142,16 +154,17 @@ class PRManager:
     def handle_pr_opened(self, pr: PullRequest) -> bool:
         """
         Handle a newly opened pull request.
-        
+        Reply as the authenticated user, not as a bot.
+
         Args:
             pr: PullRequest object
-        
+
         Returns:
             True if handled successfully
         """
         try:
             logger.info(f"New PR opened: #{pr.number} - {pr.title}")
-            
+
             # Send email notification
             self.email.notify_pr_activity(
                 pr.number,
@@ -160,16 +173,16 @@ class PRManager:
                 f"Opened by @{pr.user.login} from {pr.head.ref} to {pr.base.ref}",
                 pr.html_url
             )
-            
+
             # Optionally add a welcome comment
             welcome_message = (
-                f"Thank you @{pr.user.login} for your pull request! 🎉\n\n"
+                f"Thank you @{pr.user.login} for your pull request!\n\n"
                 f"I'll help answer any questions you might have. "
-                f"A maintainer will review your changes soon."
+                f"I'll review your changes soon."
             )
-            
+
             return self.github.add_comment(pr, welcome_message)
-        
+
         except Exception as e:
             logger.error(f"Error handling new PR #{pr.number}: {e}")
             return False
@@ -206,16 +219,17 @@ class PRManager:
     def handle_pr_merged(self, pr: PullRequest) -> bool:
         """
         Handle a merged pull request.
-        
+        Reply as the authenticated user, not as a bot.
+
         Args:
             pr: PullRequest object
-        
+
         Returns:
             True if handled successfully
         """
         try:
             logger.info(f"PR merged: #{pr.number} - {pr.title}")
-            
+
             # Send email notification
             self.email.notify_pr_activity(
                 pr.number,
@@ -224,16 +238,16 @@ class PRManager:
                 f"Merged by @{pr.merged_by.login if pr.merged_by else 'unknown'}",
                 pr.html_url
             )
-            
+
             # Add congratulations comment
             congrats_message = (
-                f"🎉 Congratulations @{pr.user.login}! "
+                f"Congratulations @{pr.user.login}! "
                 f"Your pull request has been merged. "
                 f"Thank you for your contribution!"
             )
-            
+
             return self.github.add_comment(pr, congrats_message)
-        
+
         except Exception as e:
             logger.error(f"Error handling merged PR #{pr.number}: {e}")
             return False

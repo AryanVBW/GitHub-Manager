@@ -1,9 +1,11 @@
 """
 GitHub Manager - Main Flask Application
 Continuously running backend for GitHub repository management.
+Supports multi-repository management and personalized AI responses.
 """
 from flask import Flask, request, jsonify
 import sys
+import os
 
 from src.config import Config
 from src.logger import setup_logger
@@ -64,12 +66,19 @@ def initialize_services():
         webhook_handler = WebhookHandler(github_client, issue_manager, pr_manager)
         
         logger.info("All services initialized successfully")
-        
-        # Log repository info
-        repo_info = github_client.get_repository_info()
-        logger.info(f"Connected to repository: {repo_info.get('full_name')}")
-        logger.info(f"Default branch: {repo_info.get('default_branch')}")
-        logger.info(f"Open issues: {repo_info.get('open_issues')}")
+
+        # Log user info
+        user_info = github_client.get_user_info()
+        logger.info(f"Authenticated as: {user_info.get('login')}")
+        logger.info(f"Public repositories: {user_info.get('public_repos')}")
+
+        # Log public repositories
+        repos = github_client.get_all_public_repositories()
+        logger.info(f"Managing {len(repos)} public repositories:")
+        for repo in repos[:5]:  # Log first 5
+            logger.info(f"  - {repo.full_name}")
+        if len(repos) > 5:
+            logger.info(f"  ... and {len(repos) - 5} more")
         
     except Exception as e:
         logger.error(f"Failed to initialize services: {e}")
@@ -79,13 +88,23 @@ def initialize_services():
 @app.route('/')
 def index():
     """Health check endpoint."""
+    user_info = github_client.get_user_info() if github_client else {}
+    repos = github_client.get_all_public_repositories() if github_client else []
+
     return jsonify({
         'status': 'running',
         'service': 'GitHub Manager',
-        'version': '1.0.0',
-        'repository': Config.GITHUB_REPO,
+        'version': '2.0.0',
+        'authenticated_user': user_info.get('login', 'unknown'),
+        'managing_repositories': len(repos),
         'ai_provider': Config.AI_PROVIDER,
-        'email_enabled': Config.has_email_configured()
+        'ai_model': Config.OPENAI_MODEL if Config.AI_PROVIDER == 'openai' else Config.GEMINI_MODEL,
+        'email_enabled': Config.has_email_configured(),
+        'features': {
+            'multi_repo': True,
+            'personalized_responses': True,
+            'custom_system_prompt': bool(os.getenv('SYSTEM_PROMPT'))
+        }
     })
 
 
@@ -94,15 +113,18 @@ def health():
     """Detailed health check endpoint."""
     try:
         # Check GitHub connection
-        repo_info = github_client.get_repository_info()
-        github_status = 'connected' if repo_info else 'disconnected'
-        
+        user_info = github_client.get_user_info()
+        repos = github_client.get_all_public_repositories()
+        github_status = 'connected' if user_info else 'disconnected'
+
         return jsonify({
             'status': 'healthy',
             'github': github_status,
+            'authenticated_user': user_info.get('login', 'unknown'),
+            'managing_repositories': len(repos),
             'ai_provider': Config.AI_PROVIDER,
-            'email_enabled': Config.has_email_configured(),
-            'repository': repo_info.get('full_name', 'unknown')
+            'ai_model': Config.OPENAI_MODEL if Config.AI_PROVIDER == 'openai' else Config.GEMINI_MODEL,
+            'email_enabled': Config.has_email_configured()
         })
     except Exception as e:
         logger.error(f"Health check failed: {e}")

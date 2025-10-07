@@ -2,6 +2,17 @@
 
 This document provides technical details about the GitHub Manager application architecture, code organization, and implementation details.
 
+## 🆕 Version 2.0 Features
+
+This version introduces major architectural improvements:
+
+1. **Multi-Repository Support**: Manages all public repositories automatically
+2. **User Style Analysis**: Analyzes each user's writing style for personalized responses
+3. **Personalized AI Responses**: Generates unique responses tailored to each user
+4. **Customizable System Prompts**: Allows personality customization via environment variables
+5. **AI Model Selection**: Supports multiple AI models with configurable selection
+6. **Natural Identity**: Replies as the authenticated user, not as a bot
+
 ## 📁 Directory Structure
 
 ```
@@ -31,36 +42,96 @@ github-manager/
 
 ## 🏗️ System Architecture
 
-### High-Level Overview
+### High-Level Overview (Version 2.0)
 
 ```
-GitHub Repository
-       ↓ (webhooks)
-   Heroku App
+Multiple GitHub Repositories
+       ↓ (webhooks with repo info)
+   Heroku/AWS/VPS App
        ↓
    Flask Server
        ↓
-Webhook Handler
+Webhook Handler (extracts repo from payload)
        ↓
 ┌──────┴──────┐
 │             │
 Issue Manager  PR Manager
 │             │
+│  ┌──────────┴──────────┐
+│  │                     │
+│  User Style Analyzer   Personalized Response Generator
+│  │                     │
+│  └──────────┬──────────┘
+│             │
 └──────┬──────┘
        ↓
-┌──────┴──────┬──────────┐
-│             │          │
-GitHub API    AI API     Email API
+┌──────┴──────┬──────────┬──────────┐
+│             │          │          │
+GitHub API    AI API     Email API  User Cache
+(multi-repo)  (custom    (optional) (style data)
+              prompts)
 ```
 
-### Component Interaction Flow
+### Component Interaction Flow (Version 2.0)
 
-1. **GitHub** sends webhook events to the Flask server
-2. **Webhook Handler** verifies signature and routes events
-3. **Issue/PR Managers** process events and make decisions
-4. **GitHub Client** interacts with GitHub API
-5. **AI Service** generates intelligent responses
-6. **Email Service** sends notifications (optional)
+1. **GitHub** sends webhook events from any repository to the Flask server
+2. **Webhook Handler** verifies signature, extracts repository info, and routes events
+3. **GitHub Client** retrieves the specific repository from cache or API
+4. **Issue/PR Managers** process events and make decisions
+5. **User Analyzer** fetches user's comment history and analyzes writing style
+6. **AI Service** generates personalized responses using:
+   - Custom system prompt (from environment)
+   - User's writing style analysis
+   - Full context (issue/PR details)
+   - Selected AI model (Gemini or OpenAI)
+7. **GitHub Client** posts response as the authenticated user
+8. **Email Service** sends notifications (optional)
+
+### Multi-Repository Architecture
+
+```
+GitHub Client
+    ↓
+┌───┴────────────────────────────┐
+│  Authenticated User            │
+│  ├── Repository Cache          │
+│  │   ├── repo1 (cached)        │
+│  │   ├── repo2 (cached)        │
+│  │   └── repo3 (cached)        │
+│  └── Public Repos Discovery    │
+└────────────────────────────────┘
+         ↓
+Webhook Event (contains repo info)
+         ↓
+Repository Lookup (from cache or API)
+         ↓
+Process Event for Specific Repository
+```
+
+### User Style Analysis Architecture
+
+```
+User Comments on Issue/PR
+         ↓
+Fetch User's Comment History (last 10 comments)
+         ↓
+┌────────┴────────────────────────┐
+│  User Style Analyzer            │
+│  ├── Calculate avg length       │
+│  ├── Detect tone (casual/formal)│
+│  ├── Measure formality level    │
+│  ├── Count emoji usage          │
+│  └── Analyze sentence structure │
+└────────┬────────────────────────┘
+         ↓
+User Style Profile
+         ↓
+Build Personalized Context
+         ↓
+AI Service (with custom system prompt)
+         ↓
+Personalized Response (matches user's style)
+```
 
 ## 🔧 Core Components
 
@@ -90,15 +161,20 @@ GitHub API    AI API     Email API
 
 **Purpose**: Centralized configuration and validation
 
-**Features**:
+**Features** (Version 2.0):
 - Loads environment variables
 - Validates required configuration
 - Provides helper methods for config access
 - Checks optional feature availability
+- **NEW**: Validates AI model selection
+- **NEW**: Supports custom system prompts
+- **NEW**: Removed single repository requirement
 
 **Configuration Categories**:
-- GitHub settings (token, repo, webhook secret)
+- GitHub settings (token, webhook secret) - **NO LONGER REQUIRES REPO**
 - AI provider settings (Gemini or OpenAI)
+- **NEW**: AI model selection (GEMINI_MODEL, OPENAI_MODEL)
+- **NEW**: Custom system prompt (SYSTEM_PROMPT)
 - Email settings (optional)
 - Application settings (logging, port)
 
@@ -106,19 +182,47 @@ GitHub API    AI API     Email API
 - Ensures all required variables are set
 - Validates AI provider selection
 - Checks AI API key availability
-- Verifies repository format
+- **NEW**: Validates AI model names against supported models
+- **REMOVED**: Repository format validation (no longer needed)
+
+**Supported AI Models**:
+- **Gemini**: `gemini-pro`, `gemini-1.5-pro`, `gemini-1.5-flash`
+- **OpenAI**: `gpt-3.5-turbo`, `gpt-4`, `gpt-4-turbo`, `gpt-4o`, `gpt-4o-mini`
 
 ### 3. GitHub Client (`src/github_client.py`)
 
-**Purpose**: GitHub API interaction with rate limiting
+**Purpose**: GitHub API interaction with rate limiting and multi-repository support
 
-**Key Features**:
+**Key Features** (Version 2.0):
 - PyGithub wrapper with enhanced error handling
 - Automatic rate limit checking and waiting
-- Repository connection management
-- Issue and PR retrieval
+- **NEW**: Multi-repository management
+- **NEW**: Repository caching for performance
+- **NEW**: Authenticated user management
+- **NEW**: User comment history retrieval
+- Issue and PR retrieval (now accepts repository parameter)
 - Comment management
 - Issue assignment
+
+**Multi-Repository Support**:
+- Authenticates as user (not repository-specific)
+- Discovers all public repositories on startup
+- Caches repository objects to avoid repeated API calls
+- Accepts repository parameter for all operations
+- Supports organization repositories
+
+**Repository Caching**:
+```python
+_repositories_cache: Dict[str, Repository] = {}
+# Caches repositories by full_name (owner/repo)
+# Reduces API calls and improves performance
+```
+
+**User Comment History**:
+- Fetches user's recent comments from a repository
+- Used for writing style analysis
+- Configurable limit (default: 10 comments)
+- Searches recent issues for user activity
 
 **Rate Limiting Strategy**:
 - Checks rate limit before each API call
@@ -134,36 +238,87 @@ GitHub API    AI API     Email API
 
 ### 4. AI Service (`src/ai_service.py`)
 
-**Purpose**: AI provider abstraction and response generation
+**Purpose**: AI provider abstraction, user style analysis, and personalized response generation
 
-**Architecture**:
+**Architecture** (Version 2.0):
 ```
 AIService (main interface)
     ↓
-AIProvider (abstract base)
-    ↓
-┌───┴───┐
-│       │
-Gemini  OpenAI
+┌───┴────────────────┐
+│                    │
+UserAnalyzer         AIProvider (abstract base)
+(style analysis)          ↓
+                    ┌─────┴─────┐
+                    │           │
+                  Gemini      OpenAI
+                  (with       (with
+                   model)      model)
 ```
+
+**NEW: UserAnalyzer Class**:
+- **Purpose**: Analyzes user writing style for personalization
+- **Methods**:
+  - `analyze_writing_style(user_comments)`: Analyzes comment patterns
+  - `build_personalized_context(user_style, context)`: Creates tailored context
+
+**Writing Style Analysis**:
+```python
+{
+    "avg_length": 150,  # Average comment length
+    "tone": "casual",   # casual, formal, or technical
+    "formality": 0.3,   # 0.0 (very casual) to 1.0 (very formal)
+    "uses_emojis": True,  # Whether user uses emojis
+    "avg_sentences": 3    # Average sentences per comment
+}
+```
+
+**Style Detection Heuristics**:
+- **Tone**: Detected by keyword patterns
+  - Casual: "hey", "yeah", "cool", "awesome"
+  - Formal: "regarding", "therefore", "furthermore"
+  - Technical: "function", "class", "variable", "API"
+- **Formality**: Calculated from:
+  - Contractions usage (don't, can't, etc.)
+  - Greeting patterns
+  - Sentence structure
+- **Emoji Usage**: Regex pattern matching
+- **Length**: Average characters per comment
 
 **Provider Selection**:
 - Configured via `AI_PROVIDER` environment variable
 - Supports "gemini" or "openai"
+- **NEW**: Model selection via `GEMINI_MODEL` or `OPENAI_MODEL`
 - Initialized once at startup
 - Fails fast if provider unavailable
 
-**Response Generation**:
-- Builds context-aware prompts
+**Response Generation** (Version 2.0):
+- **NEW**: Accepts optional user_comments for personalization
+- Analyzes user's writing style if comments provided
+- Builds personalized context based on user style
+- Uses custom system prompt from environment
 - Includes system instructions for tone
 - Implements retry logic with exponential backoff
 - Returns None on failure (graceful degradation)
 
-**Prompt Engineering**:
-- System instruction emphasizes humility and professionalism
+**Prompt Engineering** (Version 2.0):
+- **NEW**: Customizable system prompt via `SYSTEM_PROMPT` environment variable
+- Default emphasizes humility and professionalism
+- **NEW**: Personalized context includes user style preferences
 - Context includes issue/PR details
 - Responses kept concise and actionable
 - Tone is friendly and supportive
+- **NEW**: Adapts to each user's communication style
+
+**Personalization Example**:
+```python
+# User A (casual, uses emojis)
+user_a_style = {"tone": "casual", "uses_emojis": True}
+response_a = "Hey! That's a great question! 🎉 Here's what you can do..."
+
+# User B (formal, technical)
+user_b_style = {"tone": "formal", "formality": 0.8}
+response_b = "Thank you for your inquiry. Regarding your question, the recommended approach is..."
+```
 
 ### 5. Email Service (`src/email_service.py`)
 

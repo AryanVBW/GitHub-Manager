@@ -45,7 +45,7 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
-
+.env
 # Testing
 .pytest_cache/
 .coverage
